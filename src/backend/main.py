@@ -31,7 +31,7 @@ def main() -> None:
                           choices=[a.value for a in Architecture],
                           default=Architecture.PLANNER_PROGRAMMER_REVIEWER.value)
     generate.add_argument("--provider", 
-                          choices=["demo", "demo-seeded", "openai"], 
+                          choices=["demo", "demo-seeded", "openai", "openai-seeded"], 
                           default="demo")
     generate.add_argument("--model", 
                           help="Override OPENAI_MODEL for all three roles")
@@ -118,10 +118,15 @@ def main() -> None:
     try:
         if args.command == "generate":
             
-            if args.provider == "openai":
+            if args.provider in ("openai", "openai-seeded"):
                 
                 load_dotenv(PROJECT_ROOT / ".env")
                 provider = OpenAIProvider(args.model)
+                
+                if args.provider == "openai-seeded":
+                    # Live gpt-4.1 everywhere, planted bugs on the seeded tasks (researcher-only)
+                    from .services.demo_provider import SeededProvider
+                    provider = SeededProvider(provider)
                 
             else:
                 

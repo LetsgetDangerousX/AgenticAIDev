@@ -60,3 +60,41 @@ class DemoProvider:
             raise ValueError(f"Unknown role: {role}")
 
         return ModelResponse(json.dumps(data), self.model)
+
+
+class SeededProvider:
+    """Live model for every role, with Amber's planted bugs on the seeded tasks.
+
+    Wraps a live provider (OpenAIProvider). Every role calls the live model as usual. For
+    tasks whose fixture is marked use_seeded (modulo and overflow_guard, the tasks the
+    schedule places one per display block), the programmer's code and summary are replaced
+    by the planted-bug file before the workflow continues, so the reviewer reviews the buggy
+    code live. All other tasks keep the live model's output unchanged."""
+
+    def __init__(self, live):
+        self.live = live
+
+    @property
+    def cache_identity(self) -> dict:
+        return {**self.live.cache_identity, "planted_bugs": "fixtures marked use_seeded"}
+
+    def complete(self, *, role: str, system_prompt: str, user_prompt: str) -> ModelResponse:
+
+        response = self.live.complete(role=role, system_prompt=system_prompt, user_prompt=user_prompt)
+        if role != "programmer":
+            return response
+
+        task_id = json.loads(user_prompt)["task"]["id"]
+        path = FIXTURES / f"{task_id}.json"
+        if not path.is_file():
+            return response
+
+        fixture = json.loads(path.read_text(encoding="utf-8"))
+        if not fixture.get("use_seeded"):
+            return response
+
+        source = (FIXTURES / fixture["seeded_file"]).read_text(encoding="utf-8")
+        data = {"summary": fixture["programmer_summary"], "files": {APP_FILE: source}}
+        # Keep the live call's model and token counts: the call really happened.
+        return ModelResponse(json.dumps(data), response.model, response.input_tokens,
+                             response.output_tokens)
