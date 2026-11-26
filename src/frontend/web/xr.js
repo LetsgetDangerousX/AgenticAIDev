@@ -325,17 +325,13 @@ class DecisionPanel extends Panel {
   async send() {
     if (!this.ready() || this.sending) return;
     this.sending = true;
-    this.status = "Saving…";
-    this.draw();
-    try {
-      await submitDecision({ cacheId: this.trial.cache_id, participant, decision: this.decision,
-                             responses: this.responses, log });
-      await showNext();
-    } catch (error) {
-      this.sending = false;
-      this.status = error.message;
-      this.draw();
-    }
+    // Decision time stops here; the questionnaire is answered outside VR and timed separately.
+    const pending = { cacheId: this.trial.cache_id, participant, decision: this.decision,
+                      responses: { ...this.responses }, decisionSeconds: log.elapsed(),
+                      interactions: [...log.events] };
+    log.add("decision_submitted", this.decision);
+    this.message("Decision recorded. Please answer the short questionnaire on the page in front of you.");
+    await openQuestionnaire(this.trial, this.position, pending);
   }
 
   draw() {
@@ -524,6 +520,86 @@ async function startTrial(next) {
   log.restart();
   gaze.logged = null;
   log.add("trial_start", trial.cache_id);
+}
+
+// ---------------------------------------------------------------- questionnaire
+
+// NASA-TLX after each VR trial, shown as a normal web page: the participant leaves VR to
+// answer it and presses Enter VR again for the next trial.
+const form = document.getElementById("questionnaire");
+let questionnaireOpen = false;
+
+function element(tag, attributes = {}, text = "") {
+  const node = document.createElement(tag);
+  Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, value));
+  if (text) node.textContent = text;
+  return node;
+}
+
+async function openQuestionnaire(trial, position, pending) {
+  questionnaireOpen = true;
+  if (renderer.xr.isPresenting) {
+    try { await renderer.xr.getSession().end(); } catch (error) { debug("end_vr_failed", { message: error.message }); }
+  }
+  enterButton.hidden = true;
+  const opened = performance.now();
+  const ratings = {};
+
+  form.replaceChildren();
+  const inner = element("div", { class: "inner" });
+  inner.append(element("h1", {}, `Trial ${position} of 6: a few questions`), element("p", {}, trial.questionnaire_intro));
+  for (const scale of trial.workload) {
+    const box = element("div", { class: "scale unset" });
+    const value = element("span", { class: "value" }, "not rated yet");
+    const slider = element("input", { type: "range", min: "0", max: "100", step: "5", value: "50",
+                                       "aria-label": scale.name });
+    slider.addEventListener("input", () => {
+      ratings[scale.id] = Number(slider.value);
+      value.textContent = slider.value;
+      box.classList.remove("unset");
+    });
+    const heading = element("h2", {}, `${scale.name}: `);
+    heading.append(value);
+    const ends = element("div", { class: "ends" });
+    ends.append(element("span", {}, `0 = ${scale.low}`), element("span", {}, `100 = ${scale.high}`));
+    box.append(heading, element("p", {}, scale.text), slider, ends);
+    inner.append(box);
+  }
+  const error = element("div", { class: "error" });
+  const submit = element("button", { type: "submit" }, "Submit and continue");
+  inner.append(error, submit);
+  form.append(inner);
+  form.hidden = false;
+  form.scrollTop = 0;
+  form.oninput = () => { if (!submit.disabled) error.textContent = ""; };
+
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const missing = trial.workload.filter((scale) => ratings[scale.id] === undefined).map((scale) => scale.name);
+    if (missing.length) {
+      error.textContent = `Please move the slider for: ${missing.join(", ")}.`;
+      return;
+    }
+    submit.disabled = true;
+    error.textContent = "Saving…";
+    try {
+      await submitDecision({ ...pending, questionnaire: {
+        workload: ratings,
+        questionnaire_seconds: Number(((performance.now() - opened) / 1000).toFixed(3)) } });
+    } catch (failure) {
+      submit.disabled = false;
+      error.textContent = failure.message;
+      return;
+    }
+    form.hidden = true;
+    questionnaireOpen = false;
+    await showNext();
+    const { next } = await fetchSession(participant);
+    enterButton.hidden = !(next?.display === "xr") || enterButton.disabled;
+    hint.textContent = next?.display === "xr"
+      ? `Saved. Press Enter VR to start trial ${next.position} of 6.`
+      : decisionPanel.text;
+  };
 }
 
 // ---------------------------------------------------------------- pointing
@@ -774,7 +850,7 @@ renderer.xr.addEventListener("sessionstart", () => {
   enterButton.hidden = true;
   debug("entered_vr", { referenceSpace: "local" });
 });
-renderer.xr.addEventListener("sessionend", () => { enterButton.hidden = false; });
+renderer.xr.addEventListener("sessionend", () => { enterButton.hidden = questionnaireOpen; });
 setUpEnterButton();
 
 if (!participant) {

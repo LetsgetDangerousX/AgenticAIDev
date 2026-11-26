@@ -78,7 +78,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"cache_id": result.cache_id, "task": payload["task"],
                                    "sections": build_sections(payload, context),
                                    "decision_help": context["decision_help"],
-                                   "questions": context["questions"]})
+                                   "questions": context["questions"],
+                                   "questionnaire_intro": context["questionnaire_intro"],
+                                   "workload": context["workload"]})
 
         if route.startswith("/api/session/"):
             try:
@@ -115,7 +117,8 @@ class Handler(SimpleHTTPRequestHandler):
                 str(body.get("decision", "")), self.runtime / "decisions.jsonl",
                 decision_seconds=float(seconds) if seconds is not None else None,
                 responses=body.get("responses") if isinstance(body.get("responses"), dict) else {},
-                interactions=body.get("interactions") if isinstance(body.get("interactions"), list) else [])
+                interactions=body.get("interactions") if isinstance(body.get("interactions"), list) else [],
+                questionnaire=body.get("questionnaire") or {})  # required: {} fails validation
         except FileNotFoundError:
             return self.send_json({"error": "Unknown trial"}, HTTPStatus.NOT_FOUND)
         except (ValueError, TypeError) as error:
