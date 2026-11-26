@@ -1,32 +1,30 @@
-Agentic AI Project Collaboration
+# Layered Agentic AI Workflows for Human-Centric Software Development
 
-This repository is our central workspace for researching and developing our project for Professor Francisco.
+A user study system that tests whether adding planning and review agents to an LLM coding workflow helps people catch bad AI-generated code, and whether a 3D view of the agents' work changes how much they trust it.
 
-Repository Structure
+Built for CS 567 (3D User Interfaces) with Dr. Francisco Ortega at Colorado State University, Fall 2026, by Amber Ferrell and Chris Mills. The IRB protocol has been submitted.
 
-    Notebooks: Jupyter Notebooks for project communication, brainstorming, and laying out ideas.
+## What it does
 
-    Research: Folder for academic papers and documentation on Agentic AI.
+- A Python multi-agent system on the OpenAI API with Planner, Programmer, and Reviewer agents. Agent outputs are cached, so every participant sees the exact same responses and runs are reproducible.
+- Each agent output is scored against hidden tests, and some trials contain seeded failures, so the study can measure whether participants accept code that is actually wrong.
+- Participants review the agents' work on a 2D Streamlit app and in a WebXR view on a Meta Quest headset, where the repository, prompts, agent feedback, and code diffs are panels in a 3D room.
+- Every decision is logged with correctness, trust and confidence ratings, decision time, and which sections were viewed, then exported for analysis. NASA-TLX measures workload.
 
-    Images: Folder for images that were found useful.
+## Study design
 
-    Proposal: Drafts and notes for the upcoming project proposal.
+A 3×2 within-subjects design: three agent workflows crossed with two displays (2D vs. XR). Twelve participants each complete six trials, three per display, with trial order counterbalanced and one seeded-failure trial in each part.
 
-    src: Source code for human centric agent models.
+## Team
 
-    test: Test cases
+- **Amber Ferrell:** built the 2D Streamlit participant app, the WebXR participant interface and VR room, the session flow that runs a participant across both devices, hidden-test scoring, the OpenAI provider, and the decision-metrics export. Set up the repository and project workflow.
+- **Chris Mills:** built the initial architecture and baseline, the seeded-failure trials, NASA-TLX for both displays, and remote hosting for participants.
 
-Immediate Action Items
+## Tech stack
 
-    Gather research and papers on Agentic AI focused on human centric projects.
+Python, OpenAI API, Streamlit, WebXR, Three.js, JavaScript, unittest
 
-    Message Professor Francisco for specific direction on the project scope.
-
-    Schedule meet with Professor.
-
-    Review ideas in the communication notebook to select a final topic before the proposal deadline next week.
-
-Running the Prototype
+## Running the prototype
 
 Running participant sessions (remote through public links, or in person)? See HOSTING.md.
 
