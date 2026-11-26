@@ -92,6 +92,10 @@ def run_trial(participant: str, trial: dict, preview: bool = False) -> None:
     if key not in st.session_state:
         st.session_state[key] = {"start": time.time(), "events": [], "viewed": None}
 
+    if st.session_state[key].get("pending"):
+        run_questionnaire(participant, trial, result, key)
+        return
+
     heading = "Preview (not recorded)" if preview else f"Trial {trial['position']} of 6"
     st.title(f"{heading}: {result.task['title']}")
     st.write("Read each section from left to right, then make your decision at the bottom of the page.")
@@ -128,11 +132,40 @@ def run_trial(participant: str, trial: dict, preview: bool = False) -> None:
             st.error("Please answer both questions and choose Accept or Reject.")
             return
         log_event(key, "choose", decision.split()[0].lower())
+        # Decision time stops here; the questionnaire on the next page is timed separately.
+        now = time.time()
+        st.session_state[key]["pending"] = {
+            "decision": decision.split()[0].lower(), "decision_seconds": now - st.session_state[key]["start"],
+            "responses": responses, "questionnaire_start": now}
+        st.rerun()
+
+
+def run_questionnaire(participant: str, trial: dict, result, key: str) -> None:
+    """NASA-TLX after the decision. Saving it records the trial."""
+    pending = st.session_state[key]["pending"]
+    st.title(f"Trial {trial['position']} of 6: a few questions")
+    st.write(context["questionnaire_intro"])
+    with st.form(key=f"{key}:questionnaire"):
+        workload = {}
+        for scale in context["workload"]:
+            st.markdown(f"**{scale['name']}**: {scale['text']}")
+            workload[scale["id"]] = st.radio(
+                f"{scale['name']} (0 = {scale['low']}, 100 = {scale['high']})", list(range(0, 101, 5)),
+                index=None, horizontal=True, key=f"{key}:tlx:{scale['id']}")
+            st.caption(f"0 = {scale['low']}  ·  100 = {scale['high']}")
+        submitted = st.form_submit_button("Submit and continue", type="primary")
+
+    if submitted:
+        if any(value is None for value in workload.values()):
+            st.error("Please rate all six scales.")
+            return
         session = TrialSession(participant, "2d", result)
         session.present()
-        session.record_decision(decision.split()[0].lower(), DECISIONS,
-                                decision_seconds=time.time() - st.session_state[key]["start"],
-                                responses=responses, interactions=st.session_state[key]["events"])
+        session.record_decision(
+            pending["decision"], DECISIONS, decision_seconds=pending["decision_seconds"],
+            responses=pending["responses"], interactions=st.session_state[key]["events"],
+            questionnaire={"workload": workload,
+                           "questionnaire_seconds": time.time() - pending["questionnaire_start"]})
         st.rerun()
 
 

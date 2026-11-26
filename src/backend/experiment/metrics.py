@@ -14,11 +14,14 @@ from statistics import mean
 from ..pipelines.workflow import load_cached
 
 SECTIONS = ["task", "plan", "before", "after", "review"]
+TLX_SCALES = ["mental", "physical", "temporal", "performance", "effort", "frustration"]
 
 TRIAL_COLUMNS = [
     "participant_id", "trial_id", "timestamp", "display", "architecture", "task_id", "cache_id",
     "decision", "expected_decision", "correct", "seeded_failure", "decision_seconds",
-    "trust", "confidence", *[f"first_view_{section}_seconds" for section in SECTIONS],
+    "trust", "confidence", *[f"tlx_{scale}" for scale in TLX_SCALES], "raw_tlx",
+    "questionnaire_seconds",
+    *[f"first_view_{section}_seconds" for section in SECTIONS],
     "sections_viewed", "scrolls", "panel_moves", "hidden_pass_rate", "regressions",
     "reviewer_verdict", "model_calls", "agent_seconds", "input_tokens", "output_tokens",
 ]
@@ -26,7 +29,7 @@ TRIAL_COLUMNS = [
 SUMMARY_COLUMNS = [
     "group_by", "group", "trials", "accuracy", "seeded_failure_trials", "seeded_failure_caught",
     "correct_change_trials", "correct_change_accepted", "accept_rate", "mean_decision_seconds",
-    "mean_trust", "mean_confidence",
+    "mean_trust", "mean_confidence", "mean_raw_tlx",
 ]
 
 GROUPINGS = {
@@ -49,6 +52,8 @@ def trial_row(record: dict, cache_dir: Path) -> dict:
         if event.get("type") == "view":
             first_view.setdefault(event.get("target"), event.get("t"))
     count = lambda kind: sum(event.get("type") == kind for event in record.get("interactions", []))
+    questionnaire = record.get("questionnaire") or {}
+    workload = questionnaire.get("workload") or {}
 
     row = {
         **{key: record.get(key) for key in ("participant_id", "trial_id", "timestamp", "display", "architecture",
@@ -57,6 +62,10 @@ def trial_row(record: dict, cache_dir: Path) -> dict:
         "seeded_failure": record.get("expected_decision") == "reject" if record.get("expected_decision") else None,
         "trust": record.get("responses", {}).get("trust"),
         "confidence": record.get("responses", {}).get("confidence"),
+        # Raw TLX = the plain mean of the six scales (no weighting step).
+        **{f"tlx_{scale}": workload.get(scale) for scale in TLX_SCALES},
+        "raw_tlx": round(mean(workload[s] for s in TLX_SCALES), 2) if all(s in workload for s in TLX_SCALES) else None,
+        "questionnaire_seconds": questionnaire.get("questionnaire_seconds"),
         **{f"first_view_{section}_seconds": first_view.get(section) for section in SECTIONS},
         "sections_viewed": len(first_view),
         "scrolls": count("scroll"),
@@ -110,6 +119,7 @@ def summarize(rows: list[dict]) -> list[dict]:
                 "mean_decision_seconds": average(members, "decision_seconds"),
                 "mean_trust": average(members, "trust"),
                 "mean_confidence": average(members, "confidence"),
+                "mean_raw_tlx": average(members, "raw_tlx"),
             })
     return summary
 

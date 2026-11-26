@@ -45,13 +45,16 @@ export class InteractionLog {
   }
 }
 
-export async function submitDecision({ cacheId, participant, decision, responses, log }) {
+// decisionSeconds and interactions are captured when the participant submits the decision,
+// so the questionnaire that follows does not count toward decision time.
+export async function submitDecision({ cacheId, participant, decision, responses, decisionSeconds,
+                                       interactions, questionnaire }) {
   const response = await fetch("/api/decisions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       cache_id: cacheId, participant_id: participant, display: "xr", decision, responses,
-      decision_seconds: log.elapsed(), interactions: log.events,
+      decision_seconds: decisionSeconds, interactions, questionnaire,
     }),
   });
   const data = await response.json();

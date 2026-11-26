@@ -21,7 +21,7 @@ from src.backend.experiment.merge import merge
 from src.backend.experiment.metrics import analyze
 from src.backend.experiment.participant_export import FORBIDDEN, NAME, export
 from src.backend.experiment.plan import next_trial, session_plan
-from src.backend.experiment.session import TrialSession
+from src.backend.experiment.session import TrialSession, validate_questionnaire
 from src.backend.experiment.presentation import build_sections
 from src.backend.experiment.check_suites import SEEDED_TASKS
 from src.backend.experiment.schedule import DEFAULT_TASKS, build_schedule
@@ -35,6 +35,8 @@ from src.backend.services.demo_provider import DemoProvider
 ROOT = Path(__file__).resolve().parents[1]
 TASK = ROOT / "experiment" / "tasks" / "demo_task.json"
 BASELINE = ROOT / "baseline"
+TLX = {"mental": 70, "physical": 10, "temporal": 40, "performance": 30, "effort": 60, "frustration": 20}
+QUESTIONNAIRE = {"workload": TLX, "questionnaire_seconds": 41.5}
 
 
 def generate(runtime, architecture, seeded=False):
@@ -193,11 +195,11 @@ class MetricsTests(unittest.TestCase):
             runtime = Path(tmp)
             correct = generate(runtime, Architecture.PROGRAMMER_ONLY)
             seeded = generate(runtime, Architecture.PROGRAMMER_REVIEWER, seeded=True)
-            for result, decision in [(correct, "accept"), (seeded, "accept")]:
+            for result, decision, questionnaire in [(correct, "accept", QUESTIONNAIRE), (seeded, "accept", None)]:
                 session = TrialSession("p01", "2d", result)
                 session.present()
                 session.record_decision(decision, runtime / "decisions.jsonl", decision_seconds=10,
-                                        responses={"trust": 6, "confidence": 4},
+                                        responses={"trust": 6, "confidence": 4}, questionnaire=questionnaire,
                                         interactions=[{"t": 2.5, "type": "view", "target": "after"},
                                                       {"t": 4.0, "type": "view", "target": "after"}])
             rows, summary = analyze(runtime, runtime / "analysis")
@@ -210,6 +212,27 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(participant["accuracy"], 0.5)
         self.assertEqual(participant["seeded_failure_caught"], 0.0)
         self.assertEqual(participant["mean_trust"], 6)
+        self.assertEqual(rows[0]["tlx_mental"], 70)
+        self.assertEqual(rows[0]["raw_tlx"], 38.33)
+        self.assertIsNone(rows[1]["raw_tlx"])
+        self.assertEqual(participant["mean_raw_tlx"], 38.33)
+
+
+class QuestionnaireTests(unittest.TestCase):
+
+    def test_accepts_complete_answers(self):
+        clean = validate_questionnaire({**QUESTIONNAIRE, "extra": "ignored"})
+        self.assertEqual(clean, QUESTIONNAIRE)
+        self.assertEqual(clean["questionnaire_seconds"], 41.5)
+
+    def test_rejects_incomplete_or_invalid_answers(self):
+        missing = {key: value for key, value in TLX.items() if key != "effort"}
+        for bad in [None, {}, {**QUESTIONNAIRE, "workload": missing},
+                    {**QUESTIONNAIRE, "workload": {**TLX, "mental": 52}},
+                    {**QUESTIONNAIRE, "workload": {**TLX, "mental": 105}},
+                    {**QUESTIONNAIRE, "workload": {**TLX, "mental": True}}]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                validate_questionnaire(bad)
 
     def test_empty_log_exports_headers_only(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -322,6 +345,7 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("evaluation", json.dumps(payload))
         self.assertEqual([s["id"] for s in payload["sections"]], ["task", "before", "after", "review"])
         self.assertEqual(len(payload["questions"]), 2)
+        self.assertEqual([scale["id"] for scale in payload["workload"]], list(TLX))
 
     def test_session_endpoint(self):
         status, session = self.request("/api/session/p05")
@@ -339,13 +363,24 @@ class ServerTests(unittest.TestCase):
         status, _ = self.request("/api/decisions", {
             "cache_id": self.seeded.cache_id, "participant_id": "p99", "display": "xr",
             "decision": "accept", "decision_seconds": 12.5,
-            "responses": {"trust": 6, "confidence": 5},
+            "responses": {"trust": 6, "confidence": 5}, "questionnaire": QUESTIONNAIRE,
             "interactions": [{"t": 1.0, "type": "view", "target": "diff"}]})
         self.assertEqual(status, 200)
         record = json.loads((self.runtime / "decisions.jsonl").read_text().splitlines()[-1])
         self.assertEqual(record["expected_decision"], "reject")
         self.assertFalse(record["correct"])
         self.assertEqual(record["decision_seconds"], 12.5)
+        self.assertEqual(record["questionnaire"]["workload"], TLX)
+
+    def test_rejects_decision_without_questionnaire(self):
+        log = self.runtime / "decisions.jsonl"
+        before = log.read_text() if log.is_file() else ""
+        status, body = self.request("/api/decisions", {
+            "cache_id": self.seeded.cache_id, "participant_id": "p98", "display": "xr",
+            "decision": "accept", "decision_seconds": 5})
+        self.assertEqual(status, 400)
+        self.assertIn("workload", body["error"])
+        self.assertEqual(log.read_text() if log.is_file() else "", before)
 
     def test_records_headset_diagnostics(self):
         status, _ = self.request("/api/debug", {"event": "page_loaded", "immersiveVr": True})
