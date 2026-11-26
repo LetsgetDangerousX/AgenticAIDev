@@ -435,5 +435,63 @@ while (trial := next_trial(session_plan(sys.argv[1], runtime))):
             merge([bad], self.runtime, dry_run=True)
 
 
+class FakeLiveProvider:
+    """Stands in for gpt-4.1: valid output for every role, with the correct reference code."""
+
+    cache_identity = {"provider": "fake-live"}
+
+    def complete(self, *, role, system_prompt, user_prompt):
+        from src.backend.models import ModelResponse
+        task = json.loads(user_prompt)["task"]["id"]
+        if role == "planner":
+            data = {"summary": "plan", "steps": ["step"], "edge_cases": ["edge"]}
+        elif role == "programmer":
+            source = (ROOT / "experiment/reference_solutions" / task / "app/example_calculator.py").read_text()
+            data = {"summary": "live summary", "files": {"app/example_calculator.py": source}}
+        else:
+            data = {"summary": "looks fine", "verdict": "approve", "issues": [], "limitations": []}
+        return ModelResponse(json.dumps(data), "fake-live", 10, 5)
+
+
+class SeededProviderTests(unittest.TestCase):
+
+    def setUp(self):
+        from src.backend.services.demo_provider import SeededProvider
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runtime = Path(self.tmp.name)
+        self.provider = SeededProvider(FakeLiveProvider())
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_task(self, task, architecture=Architecture.PLANNER_PROGRAMMER_REVIEWER):
+        task_file = ROOT / "experiment" / "tasks" / f"{task}.json"
+        return Workflow(self.provider, architecture).run(load_task(task_file), baseline=BASELINE,
+                                                         runtime=self.runtime)
+
+    def test_seeded_tasks_get_the_planted_bug(self):
+        for task in sorted(SEEDED_TASKS):
+            with self.subTest(task=task):
+                result = self.run_task(task)
+                evaluation = result.metadata["evaluation"]
+                self.assertEqual(evaluation["correct_decision"], "reject")
+                self.assertEqual(evaluation["visible_pass_rate"], 1.0)
+                programmer = next(a for a in result.agents if a["role"] == "programmer")
+                self.assertNotEqual(programmer["data"]["summary"], "live summary")
+
+    def test_reviewer_sees_the_planted_code(self):
+        result = self.run_task("modulo")
+        reviewer = next(a for a in result.agents if a["role"] == "reviewer")
+        self.assertIn("fmod", reviewer["user_prompt"])
+
+    def test_other_tasks_keep_the_live_output(self):
+        for task in sorted(set(DEFAULT_TASKS) - SEEDED_TASKS):
+            with self.subTest(task=task):
+                result = self.run_task(task, Architecture.PROGRAMMER_ONLY)
+                programmer = next(a for a in result.agents if a["role"] == "programmer")
+                self.assertEqual(programmer["data"]["summary"], "live summary")
+                self.assertEqual(result.metadata["evaluation"]["correct_decision"], "accept")
+
+
 if __name__ == "__main__":
     unittest.main()
