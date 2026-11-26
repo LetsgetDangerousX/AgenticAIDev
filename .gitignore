@@ -11,6 +11,8 @@ venv/
 # Runtime experiment files
 runtime/*
 !runtime/.gitkeep
+# Cached agent responses
+!runtime/cache/
 
 # Frontend
 node_modules/
